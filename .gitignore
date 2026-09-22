@@ -1,0 +1,10 @@
+# 桌面端 loader 生成的标记，不是插件内容
+.hermes-package.json
+
+# macOS / 编辑器噪声
+.DS_Store
+._*
+*.log
+.vscode/
+.idea/
+*.swp

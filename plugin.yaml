@@ -1,0 +1,5 @@
+name: desktop-beautify
+version: 0.1.0
+description: "Hermes 桌面端美化插件（id = desktop-beautify）：侧栏「更多工具」折叠组（默认折叠、点击展开、新插件导航行自动收进来；组内含 内置浏览器 / 文档预览 / 会议记录 三行）、搜索会话框上移到侧栏最上并加细边框、加深占位文字、「已置顶」默认折叠、会话区排版与用户气泡配色（浅深双套自动）、会话产物卡片点击转「文档预览」、统一台面。全部通过注入实现，不改桌面端源码，禁用即完全还原。依赖：hermes-office-viewer（文档预览面板与会话卡片路由）、meeting-recorder（会议记录面板，需要其本地服务），见 README 的「依赖」一节。"
+author: "xionglaoshi"
+kind: standalone
