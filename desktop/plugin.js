@@ -5,7 +5,8 @@
  * （2026-09-22 从旧 id `sidebar-more-tools` 改名：旧名只描述了当时的第一个功能。）
  * 现有能力（全部靠注入实现，不改桌面端源码）：
  *   ① 侧栏导航折叠组：技能与工具 / 消息平台 / 产物 / 定时任务 / 插件页面 →
- *      收进一行「更多工具」，默认折叠，点击原地展开收起，新插件贡献的行自动收进来。
+ *      收进一行「更多工具」，**每次启动都是折叠的**（用户 2026-09-23 口径：启动即折叠，
+ *      不回读上次状态），点击原地展开收起，新插件贡献的行自动收进来。
  *   ② 搜索会话框：提到侧栏最上（用 order 排序，不搬 React 管的节点）；不要边框、不要底色，
  *      只留放大镜与文字，占位文字加深、不再半透明。
  *   ③ 会话区：**略舒展排版**（行高 / 段距 / 轮间距各加一档）。
@@ -15,8 +16,9 @@
  *   ④ 统一台面：把「窗口/会话区、侧栏、输入框、浮层」这些**大面**的背景统一到同一层
  *      （= 输入框用的卡片层 `--ui-bg-editor`），消掉原生那三种极浅灰白拼成的"色块感"；
  *      只改面、不改悬停/选中这些交互反馈层。⌘K 可单独开关。
- *   ⑤ 「已置顶」挪到「会话」下方（侧栏最下方）：只给置顶分区根打一个属性，
- *      CSS 用 `order` 排到最后 —— **不搬节点、不点按钮、不动它自己的任何行为**。
+ *   ⑤ 「已置顶」挪到「会话」下方（侧栏最下方）：只给置顶分区根打一个属性，CSS 用 `order` 排到最后
+ *      —— 不搬节点、不动它自己的任何行为；另外**启动时自动折一次**（用户 2026-09-23 口径；
+ *      宿主 `$sidebarPinsOpen` 是非持久化 atom、默认展开，只能进场替它折；⌘K 可开关）。
  *   ⑥ 「更多工具」展开后的最末端加一行「内置浏览器」：点它在**会话区**整块打开一个浏览器标签
  *      （与侧栏「Office 查看器」同形；`host.openWorkspace`）。里面的内核就是桌面端自带浏览器那套
  *      webview（同一个 `persist:hermes-preview` 分区 ⇒ 登录状态共用）。宿主没有 `openWorkspace` 时
@@ -119,14 +121,20 @@ const RECONCILE_MS = 200
  * ⑤ 「已置顶」排到侧栏最下方（用户 2026-09-22 口径：把「已置顶」和「会话」换个位置）。
  * 做法刻意做到最小：只在**置顶分区根**上打一个属性，由 CSS 用 `order` 把它排到最后。
  *   · 不搬节点 —— React 只管它渲染过的节点，属性它不碰，安全性最高；
- *   · 不点按钮、不改折叠、不动任何文字/样式 —— 置顶分区本身的行为保持官方原版；
  *   · 父容器（承载各分区的那个 div）是 flex column，`order` 才有效；「会话」那块自带
  *     `flex-1`，会自己把剩余高度吃掉，置顶分区自然贴到最下面。
  * 分区根上没有可用的标识属性（源码里没有任何 data-* ），CSS 也做不到按文字匹配，
  * 所以「哪一块是置顶」只能由 JS 按分区头文字认定，认完只做这一件事。
+ *
+ * 追加口径（用户 2026-09-23：「启动 Hermes 桌面端后『已置顶』要是折叠的」）：
+ * 进场时对分区头**点一次**把它折上 —— 宿主 `$sidebarPinsOpen` 是非持久化 atom（默认展开，
+ * 见 `app/chat/sidebar/index.tsx`），它自己不记状态，所以每次启动都得替它折这一次。
+ * 只折一次：折完撒手，用户之后怎么开合全听他的（见 autoCollapsePinned）。
  */
 const PIN_LAST_ATTR = 'data-hermes-pin-last'
 const PIN_LABELS = ['已置顶', 'Pinned']
+/** 「已置顶」启动自动折叠的开关（缺省开；开关本体见 applyPinsAuto）。 */
+let persistPinsAuto = () => {}
 
 /**
  * ③ 会话区：**略舒展排版**（行高、段距、轮间距各加一档）。
@@ -1020,6 +1028,67 @@ function tagPinnedLast() {
   target?.setAttribute(PIN_LAST_ATTR, '')
 }
 
+/** 「已置顶」自动折叠的运行态。`done` 只在**判定过一次**后置位：之后不再碰这个分区，避免跟用户抢。 */
+const pinsAuto = { on: true, done: false }
+
+/** 找「已置顶」分区根（与 tagPinnedLast 同一套认法：按分区头的标签文字）。 */
+function pinnedGroup() {
+  return (
+    [...document.querySelectorAll('[data-slot="sidebar-group"]')].find(group =>
+      PIN_LABELS.includes(firstLeafText(group.firstElementChild))
+    ) ?? null
+  )
+}
+
+/** 开关：`on` 变化后立刻重试一次；打开时允许再折一次。 */
+function applyPinsAuto(on, persist) {
+  pinsAuto.on = on
+
+  if (on) {
+    pinsAuto.done = false
+    autoCollapsePinned()
+  }
+
+  if (persist) {
+    persistPinsAuto(on)
+  }
+}
+
+/**
+ * 启动后把「已置顶」折一次（用户 2026-09-23 口径）。
+ *   · 幂等 + 只做一次：`done` 置位后永不再动，用户手动展开不会被我们回折；
+ *   · 「是否展开」用结构判定 —— 宿主只在展开时渲染内容（`{sectionOpen && <SidebarGroupContent>}`，
+ *     sessions-section.tsx），折着时那个容器根本不在 DOM 里，比盯 caret 的 class 稳；
+ *   · 分区还没渲染出来（首次 reconcile 早于宿主渲染）时不置位，交给下一次 reconcile 重试。
+ */
+function autoCollapsePinned() {
+  if (!pinsAuto.on || pinsAuto.done) {
+    return
+  }
+
+  const group = pinnedGroup()
+
+  if (!group) {
+    return
+  }
+
+  if (!group.querySelector('[data-slot="sidebar-group-content"]')) {
+    pinsAuto.done = true // 本来就是折着的（或宿主改了默认值）→ 收工
+    return
+  }
+
+  const header = [...group.querySelectorAll('button')].find(button =>
+    button.classList.contains('group/section-label')
+  )
+
+  if (!header) {
+    return
+  }
+
+  header.click()
+  pinsAuto.done = true
+}
+
 function reconcile() {
   if (!document.body) {
     return
@@ -1028,6 +1097,7 @@ function reconcile() {
   reconcileRow()
   tagSearchField()
   tagPinnedLast()
+  autoCollapsePinned() // 「已置顶」自动折叠：分区没渲染出来时不置位，下一次 reconcile 接着试
   reconcileExtraRows()
   tagRailStrip()
   registerRailPanes() // 锚点（「文件」标签）一出现就登记我们的两个面板；见该函数的注释
@@ -1633,7 +1703,7 @@ export default {
   id: PLUGIN_ID,
   name: '桌面美化',
   description:
-    '桌面美化（本机 UI 改造集合）· 侧栏「更多工具」折叠组（默认折叠，组内三行：内置浏览器 / 文档预览 / 会议记录，点前两者与会议记录都在会话区整块打开）+ 搜索框上移无边框 + 会话区排版 + 统一台面 + 「已置顶」排到「会话」下方 + 右侧栏四标签（文件 / 文档预览 / 浏览器 / 会议记录，只能切换不能关闭，按此从左到右排序）+ 「文件」里点文件转到对应标签预览',
+    '桌面美化（本机 UI 改造集合）· 侧栏「更多工具」折叠组（启动即折叠，组内三行：内置浏览器 / 文档预览 / 会议记录，点前两者与会议记录都在会话区整块打开）+ 搜索框上移无边框 + 会话区排版 + 统一台面 + 「已置顶」排到「会话」下方、启动时自动折叠 + 右侧栏四标签（文件 / 文档预览 / 浏览器 / 会议记录，只能切换不能关闭，按此从左到右排序）+ 「文件」里点文件转到对应标签预览',
   defaultEnabled: true,
 
   register(ctx) {
@@ -1654,9 +1724,13 @@ export default {
       style.textContent = CSS
       document.head.appendChild(style)
 
-      const saved = ctx.storage.get('expanded', false)
+      // 「已置顶」启动自动折叠（缺省开，可用 ⌘K 命令关掉）
+      pinsAuto.on = ctx.storage.get('pinsauto', true) !== false
+      persistPinsAuto = value => ctx.storage.set('pinsauto', value)
 
-      apply(saved === true, false)
+      // 「更多工具」（导航工具组）启动一律折叠（用户口径 2026-09-23：启动 Hermes 后它就是折叠的）。
+      // 所以这里**不再回读上次状态**；`persist` 照旧写回（便于诊断，也留着以后想改回「记住上次」）。
+      apply(false, false)
       persist = value => ctx.storage.set('expanded', value)
 
       persistCardRouting = value => ctx.storage.set('cardroute', value)
@@ -1711,6 +1785,19 @@ export default {
           detail: () => (state.expanded ? '已展开' : '已收起'),
           detailVariant: 'state',
           run: () => state.setExpanded?.(!state.expanded)
+        }
+      })
+
+      ctx.register({
+        id: 'pinsauto',
+        area: PALETTE_AREA,
+        data: {
+          id: `${PLUGIN_ID}.pinsauto`,
+          label: '桌面美化：启动时自动折叠「已置顶」 开 / 关',
+          keywords: ['已置顶', '置顶', 'pinned', '折叠', '收起', '启动', '侧栏', '美化'],
+          detail: () => (pinsAuto.on ? '已开启' : '已关闭'),
+          detailVariant: 'state',
+          run: () => applyPinsAuto(!pinsAuto.on, true)
         }
       })
 
